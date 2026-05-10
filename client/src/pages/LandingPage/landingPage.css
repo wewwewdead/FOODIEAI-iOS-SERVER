@@ -1,0 +1,85 @@
+html {
+  background-color: rgb(248, 255, 197);
+}
+
+.landingpage {
+  background-color: rgb(248, 255, 197);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.logo__box {
+  width: 100%;
+  display: flex;
+  justify-content: start;
+  padding: 4rem 0 0 4rem;
+  height: auto;
+}
+
+.logo__text {
+  font-size: clamp(3rem, 6vw, 5rem);
+  font-weight: 500;
+  font-family: "M PLUS Rounded 1c", sans-serif;
+}
+
+.landing__background {
+  background: linear-gradient(rgba(40, 50, 0, 0.4)),
+    url("../../assets/landingpage-bg.png");
+  background-size: cover;
+  background-blend-mode: multiply;
+  position: relative;
+  filter: brightness(0.9) sepia(0.2) hue-rotate(20deg);
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  color: white;
+  padding: 2rem;
+  height: 60vh;
+  position: relative;
+}
+
+.slogan__wrapper {
+  padding: 0 4rem 6rem 4rem;
+}
+
+.slogan h2 {
+  font-size: clamp(1.375rem, 4vw, 1.75rem);
+  color: hsl(var(--clr-dark-900));
+  text-align: left;
+  width: 70%;
+  font-weight: 500;
+}
+
+.home-btn {
+  display: flex;
+  justify-content: center;
+}
+
+.shiny-button {
+  margin-bottom: 2rem;
+  font-weight: 800;
+  font-size: clamp(1.25rem, 4vw, 1.5rem);
+  padding: 1rem 2rem;
+  border: 1px solid white;
+  border-radius: 50rem;
+  width: fit-content;
+  transition: all 0.3s ease;
+}
+
+.shiny-button:hover {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background-color: rgba(230, 245, 179, 0.145);
+  transform: scale(1.05);
+}
+
+@media (max-width: 75em) {
+  .logo__box {
+    padding: 2rem 0 0 2rem;
+  }
+  .slogan__wrapper {
+    padding: 0 2rem 3rem 2rem;
+  }
+}

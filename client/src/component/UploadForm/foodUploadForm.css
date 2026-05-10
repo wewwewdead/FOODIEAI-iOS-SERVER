@@ -1,0 +1,101 @@
+.form__container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+}
+
+.form__upload-wrapper p,
+.form__upload svg {
+  color: #999999;
+}
+
+.form__upload-wrapper p {
+  font-weight: 700;
+}
+
+.form__upload-cam {
+  width: 3rem;
+  height: 3rem;
+  filter: invert(60%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(100%)
+    contrast(100%);
+}
+
+.form__analyze {
+  border: 2px solid rgb(184 202 56);
+  padding: 1rem 4rem;
+  border-radius: 50rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  position: relative;
+  transition: top 0.2s ease, box-shadow 0.2s ease;
+  top: 0;
+}
+
+.form__analyze:hover {
+  top: -2px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+  background-color: rgb(184 202 56);
+}
+
+.form__analyze:active {
+  color: rgb(247, 255, 154);
+}
+
+.form__upload-wrapper {
+  width: 20rem;
+  height: 20rem;
+}
+
+.form__upload--empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 0.5rem;
+  cursor: pointer;
+  background-color: #0000000e;
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.25rem;
+}
+
+/* no image ui */
+.form__upload--empty {
+  background-image: url("data:image/svg+xml,%3csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3e%3crect width='100%25' height='100%25' fill='none' rx='20' ry='20' stroke='%23999999FF' stroke-width='6' stroke-dasharray='6%2c 14' stroke-dashoffset='0' stroke-linecap='square'/%3e%3c/svg%3e");
+}
+
+.form__upload--image {
+  background-size: cover;
+  background-position: center;
+  box-shadow: rgba(50, 50, 93, 0.25) 0px 13px 27px -5px,
+    rgba(0, 0, 0, 0.3) 0px 8px 16px -8px;
+}
+
+.form__upload-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.form__upload--image:hover .form__upload-overlay {
+  opacity: 1;
+}
+
+.form__upload-overlay p {
+  color: white;
+  font-weight: bold;
+}
+
+.form__upload-overlay .form__upload-cam {
+  filter: invert(1);
+}

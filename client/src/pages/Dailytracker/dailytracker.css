@@ -1,0 +1,31 @@
+.parent-container{
+    position: relative;
+    top: 80px;
+    padding: 1rem;
+}
+.food-data-parent {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 300px;
+  height: fit-content;
+  gap: 1rem;
+  padding: 1rem 2rem;
+  border-radius: 15px;
+  background: linear-gradient(
+    to bottom left,
+    rgb(184 202 56),
+    rgb(226, 244, 93)
+  );
+}
+.reminder {
+  background-color: #ff911cfd;
+  padding: 0.2rem;
+  border-radius: 10px;
+  display: flex;
+  position: absolute;
+  bottom: 30px;
+  left: 140px;
+  font-weight: 450;
+  font-size: 0.5rem;
+}

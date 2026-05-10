@@ -1,0 +1,334 @@
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 auto;
+  text-align: center;
+}
+h3 {
+  padding: 0;
+  margin: 0;
+}
+.hide {
+  display: none;
+}
+
+.links {
+  font-weight: 660;
+  font-size: 1.1rem;
+  text-decoration: none;
+  color: rgb(150 153 166);
+}
+.active-link {
+  font-weight: 660;
+  font-size: 1.1rem;
+  text-decoration: none;
+  color: rgb(184 202 56);
+}
+.active-link:hover {
+  color: rgb(184 202 56);
+}
+.links:hover {
+  color: rgb(184 202 56);
+}
+
+.sign-up-bttn-mobile {
+  display: none;
+}
+
+.analysis {
+  display: flex;
+  height: fit-content;
+  padding: 0rem 1rem 1rem 1rem;
+  flex-direction: column;
+  align-items: center;
+  text-align: left;
+  white-space: pre-line;
+}
+.analysis h2 {
+  margin: 0;
+  padding: 0;
+}
+.analysis-content {
+  display: flex;
+  align-items: center;
+}
+.analysis-column {
+  padding: 1rem;
+  width: 30%;
+  min-height: 200px;
+  max-height: fit-content;
+  background-color: rgb(184 202 56);
+  border: 0.5rem solid rgb(255, 248, 248);
+  border-radius: 15px;
+  margin: 0 0.5rem 0.5rem 0.5rem;
+  color: rgb(49, 56, 3);
+}
+.benefits {
+  background-color: #add8e6;
+}
+.drawbacks {
+  background-color: #a9a9a9;
+}
+
+.join-now-container {
+  padding: 2rem 0;
+  background-color: #ffffff;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: fit-content;
+}
+.be-a-member {
+  position: relative;
+  display: flex;
+}
+.free-pop-up {
+  position: absolute;
+  color: rgb(255, 255, 255);
+  background-color: rgba(255, 145, 28, 0.994);
+  left: 500px;
+  font-weight: 660;
+  font-size: 0.8rem;
+  width: fit-content;
+  height: fit-content;
+  padding: 0 0.2rem 0rem 0.2rem;
+  margin: 0;
+  border-radius: 20px;
+}
+.join-now-container h3 {
+  color: oklch(76.6626% 0.135433 153.450024 / 1);
+}
+
+.img-preview {
+  width: auto;
+  height: 350px;
+  border-radius: 10px;
+  box-shadow: 2px 2px 2px rgba(34, 0, 0, 0.413);
+}
+.food-name {
+  font-weight: 800;
+  font-size: 2.2rem;
+}
+
+.login-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100vh;
+}
+.back-home {
+  display: flex;
+  align-items: center;
+  font-weight: 800;
+  cursor: pointer;
+  align-self: flex-start;
+  margin: 0rem 0rem 1rem 1rem;
+}
+.calorie-sugar-carbs {
+  color: rgb(19, 57, 0);
+  display: flex;
+  flex-direction: column;
+  width: 90%;
+  height: fit-content;
+  margin: 0 0 1rem 0;
+}
+.food-name {
+  font-size: 1.2rem;
+}
+.kcal {
+  font-weight: 960;
+  letter-spacing: 3px;
+}
+.save-food-bttn-container {
+  margin: 1rem 0 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.bttn-container {
+  display: flex;
+  justify-content: center;
+  gap: 4rem;
+}
+.save-bttn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgb(0, 97, 71);
+  width: 100px;
+  height: 40px;
+  border-radius: 20px;
+}
+.cancel-bttn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgb(206, 65, 0);
+  width: 100px;
+  height: 40px;
+  border-radius: 20px;
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.read-the-docs {
+  color: #888;
+}
+.loading-container {
+  height: auto;
+  width: auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.food-data-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem;
+  background-color: #fcfff8;
+  border-radius: 15px;
+}
+.date-food {
+  font-size: 0.7rem;
+  font-weight: 850;
+  color: #7d7d7d;
+}
+.food-data-children {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+}
+.totals {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  gap: 1rem;
+}
+.total-calories {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+}
+.total-calories p {
+  font-weight: 680;
+  font-size: 0.8rem;
+}
+.total-sugar-carbs {
+  font-weight: 680;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.date-today {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  align-items: flex-start;
+  color: #ffffff;
+  font-weight: 680;
+}
+.bubble-message {
+  width: 50%;
+  padding: 1rem 0rem;
+}
+.message-container {
+  background-color: rgb(184 202 56);
+  padding: 0.5rem;
+  border-radius: 20px 20px 20px 0;
+}
+@media (max-width: 450px) {
+  .analysis-content {
+    flex-direction: column;
+  }
+  .food-name {
+    font-size: 1.5rem;
+  }
+  .analysis-column {
+    font-size: 0.9rem;
+    width: 90%;
+  }
+
+  .img-preview {
+    width: auto;
+    height: 150px;
+    border-radius: 10px;
+    box-shadow: 2px 2px 2px rgba(34, 0, 0, 0.413);
+  }
+  .card-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+  }
+  .free-pop-up {
+    position: absolute;
+    color: rgb(255, 255, 255);
+    background-color: rgba(255, 145, 28, 0.994);
+    left: 280px;
+    top: 60px;
+    font-weight: 660;
+    font-size: 0.8rem;
+    width: fit-content;
+    height: fit-content;
+    padding: 0 0.2rem 0rem 0.2rem;
+    margin: 0;
+    border-radius: 20px;
+  }
+  .sign-up-bttn-mobile {
+    width: fit-content;
+    display: block;
+    background-color: rgb(184 202 56);
+    color: #fcfeff;
+    padding: 0.6rem;
+    border-radius: 10px;
+    font-size: 0.8rem;
+  }
+  .sign-up-bttn {
+    font-size: 0.8rem;
+    display: none;
+  }
+  .date-today {
+    width: 100%;
+  }
+}
+
+/* NOTE: LAYOUT */
+.site-wrapper {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: linear-gradient(to right, #f8fffc, #fff9f1);
+}
+
+.site-wrapper main {
+  flex: 1;
+}
+
+.site-wrapper {
+  justify-content: space-between;
+}

@@ -1,0 +1,76 @@
+/* NOTE: RESET */
+@import url("https://fonts.googleapis.com/css2?family=Comfortaa:wght@300..700&family=Nunito:ital,wght@0,200..1000;1,200..1000&family=Sniglet:wght@400;800&display=swap");
+
+:root {
+  --clr-dark-900: 41 1% 13%; /*#212120*/
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Nunito", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+  color-scheme: light dark;
+  color: #242424;
+  background-color: rgb(255 255 255);
+  font-size: 1.125rem;
+}
+
+html.no-scroll,
+body.no-scroll {
+  overflow: hidden;
+}
+
+img {
+  /* https://www.youtube.com/watch?v=345V2MU3E_w */
+  font-style: italic;
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+p,
+h1,
+h2,
+h3 {
+  overflow-wrap: break-word;
+}
+
+li {
+  list-style-type: none;
+}
+
+button {
+  display: inline;
+  all: unset;
+  cursor: pointer;
+}
+
+main {
+  display: flex;
+  justify-content: center;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
