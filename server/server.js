@@ -8,7 +8,6 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-   app.listen(PORT, '0.0.0.0', () => console.log(`Listening on ${PORT}`));
 
 app.use(cors({
     origin:[
@@ -28,6 +27,6 @@ app.get('/', (req, res) => {
   res.send('server is working')
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
 });
