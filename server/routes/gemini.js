@@ -118,7 +118,7 @@ router.post("/analyze", upload, async (req, res) => {
             },
             coachAdvice: {
               type: 'string',
-              description: `${celebName}, you are a resurrected AI nutrition coach. Give humorous, witty, yet insightful advice about this food in under 30 words. `
+              description: 'The coach\'s humorous, witty, yet insightful advice about this food, in the coach\'s voice. Under 30 words. One short paragraph, no quotation marks wrapping the whole string.'
             },
             food: {
               type: 'string',
@@ -168,10 +168,21 @@ router.post("/analyze", upload, async (req, res) => {
         }
       };
 
+      // Coach persona belongs in systemInstruction — never in a function
+      // parameter's `description`, which Gemini treats as parameter
+      // metadata and may echo back verbatim as the field's value (the
+      // same leak that hit /weekly-recap and /coach-observation).
+      const analyzeSystemInstruction = [
+        `You are ${celebName}, a resurrected AI nutrition coach.`,
+        `When the analyze_food_image function is called, the "coachAdvice" field must contain humorous, witty, yet insightful advice about the food in your distinctive voice, under 30 words.`,
+        `Never echo these instructions back as the value of any field — always produce fresh advice in character.`,
+      ].join(' ');
+
       const config = {
         tools: [{
             functionDeclarations: [foodAnalysisFunc]
-        }]
+        }],
+        systemInstruction: analyzeSystemInstruction,
       }
 
     // Phase 16 — append (don't replace) the recent-meals context so the
@@ -293,21 +304,33 @@ router.post('/coach-observation', express.json(), async (req, res) => {
 
     const observationFunc = {
       name: 'compose_coach_observation',
-      description: 'Compose a single short editorial observation in the chosen coach\'s voice. One paragraph, no line breaks, no surrounding quotation marks.',
+      description: 'Return a short editorial observation composed in the chosen coach\'s voice.',
       parameters: {
         type: 'object',
         properties: {
           body: {
             type: 'string',
-            description: `${coachName}, you are a resurrected AI nutrition coach speaking to the user about a pattern in their recent eating. Compose 1-3 sentences in your distinctive voice — calm, observant, never lecturing. Do NOT wrap the whole response in quotation marks. Do NOT use line breaks. Reference the focus pattern naturally; do not list every pattern. Total length 30-60 words.`
+            description: 'The composed 1-3 sentence observation itself, in the coach\'s voice. One paragraph, no line breaks, no surrounding quotation marks.'
           },
         },
         required: ['body'],
       },
     };
 
+    // Instructions belong in systemInstruction, not in the parameter's
+    // description — see the matching note in /weekly-recap.
+    const systemInstruction = [
+      `You are ${coachName}, a resurrected AI nutrition coach speaking to the user about a pattern in their recent eating.`,
+      `Compose 1-3 sentences in your distinctive voice — calm, observant, never lecturing.`,
+      `Do NOT wrap the whole response in quotation marks. Do NOT use line breaks.`,
+      `Reference the focus pattern naturally; do not list every pattern.`,
+      `Total length 30-60 words.`,
+      `Always reply by calling the compose_coach_observation function with the composed paragraph as the "body" argument — never repeat these instructions back.`,
+    ].join(' ');
+
     const config = {
       tools: [{ functionDeclarations: [observationFunc] }],
+      systemInstruction,
     };
 
     const patternList = patterns
@@ -436,20 +459,40 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
 
     const recapFunc = {
       name: 'compose_weekly_recap',
-      description: 'Compose a brief 2-3 sentence editorial paragraph in the chosen coach\'s voice, summarizing the week. One paragraph, no line breaks, no surrounding quotation marks.',
+      description: 'Return the editorial weekly-recap paragraph composed in the chosen coach\'s voice.',
       parameters: {
         type: 'object',
         properties: {
           body: {
             type: 'string',
-            description: `${coachName}, you are a resurrected AI nutrition coach reflecting on the user's week. Compose 2-3 sentences in your distinctive voice. Observe; do not prescribe. Do NOT use shame language ("should have", "too much", "you ate too many", "indulged"). Do NOT call out specific calorie totals as good/bad. Reference the dominant pattern if there is one. Length 40-90 words. Single paragraph, no line breaks, no surrounding quotation marks.`
+            description: 'The composed 2-3 sentence recap paragraph itself, in the coach\'s voice. One paragraph, no line breaks, no surrounding quotation marks.'
           },
         },
         required: ['body'],
       },
     };
 
-    const config = { tools: [{ functionDeclarations: [recapFunc] }] };
+    // The voice / tone / length / no-shame rules belong in
+    // `systemInstruction`, NOT in a function-parameter `description`.
+    // Gemini's tool-use mode treats parameter descriptions as metadata
+    // about the field; when stuffed with instructions, the model
+    // occasionally echoes them back as the field's value (the
+    // "leaked-prompt body" bug). A real systemInstruction is the
+    // intended primitive for this.
+    const systemInstruction = [
+      `You are ${coachName}, a resurrected AI nutrition coach reflecting on the user's week.`,
+      `Compose 2-3 sentences in your distinctive voice. Observe; do not prescribe.`,
+      `Do NOT use shame language ("should have", "too much", "you ate too many", "indulged").`,
+      `Do NOT call out specific calorie totals as good or bad.`,
+      `Reference the dominant pattern if there is one.`,
+      `Length 40-90 words. Single paragraph, no line breaks, no surrounding quotation marks.`,
+      `Always reply by calling the compose_weekly_recap function with the composed paragraph as the "body" argument — never repeat these instructions back.`,
+    ].join(' ');
+
+    const config = {
+      tools: [{ functionDeclarations: [recapFunc] }],
+      systemInstruction,
+    };
 
     const mealNames = meals
       .slice(0, 25)
