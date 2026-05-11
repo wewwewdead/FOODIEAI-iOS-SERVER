@@ -550,11 +550,22 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
 
     console.log(`[weekly-recap] coach=${coachName} meals=${meals.length} patterns=${patterns.length} moods=${labeledCount}(L${loved}/F${fine}/T${tough})`);
 
-    const response = await ai.models.generateContent({
+    // Cold-start / long-prompt safety: Gemini occasionally returns plain
+    // text instead of calling the tool — same flake the /analyze route
+    // mitigates with one retry. The longer prompt (mood context, pattern
+    // list) makes this more frequent here. 400ms backoff, single retry.
+    const callGemini = () => ai.models.generateContent({
       model: 'gemini-2.5-flash-lite',
       contents: [{ role: 'user', parts: [{ text: promptText }] }],
       config,
     });
+
+    let response = await callGemini();
+    if (!response.functionCalls || response.functionCalls.length === 0) {
+      console.warn('[weekly-recap] no functionCalls on attempt 1, retrying once');
+      await new Promise(r => setTimeout(r, 400));
+      response = await callGemini();
+    }
 
     if (response.functionCalls && response.functionCalls.length > 0) {
       const args = response.functionCalls[0].args || {};
