@@ -407,8 +407,7 @@ router.post('/coach-observation', express.json(), async (req, res) => {
 //     "week_end":   "2026-05-10",
 //     "meals": [
 //       { "food_name": "...", "eaten_at": "...", "calories": ..,
-//         "carbs": .., "sugar": .., "protein": .., "fat": .., "fiber": ..,
-//         "mood": "loved" | "fine" | "tough" | null },
+//         "carbs": .., "sugar": .., "protein": .., "fat": .., "fiber": .. },
 //       ...
 //     ],
 //     "patterns": [
@@ -421,11 +420,7 @@ router.post('/coach-observation', express.json(), async (req, res) => {
 // Response:
 //   { "coach_name": "...", "body": "...one paragraph, no quotes...",
 //     "headline_stat": "23 meals · 14,200 calories",
-//     "top_pattern": "Pizza, 4 times — mostly Fridays",
-//     "mood_summary": "Three loved meals, four tough ones." }
-//
-// `mood_summary` is null when fewer than 3 meals carry a non-null
-// `mood` label — not enough signal to summarize honestly.
+//     "top_pattern": "Pizza, 4 times — mostly Fridays" }
 //
 // 204 No Content if `meals` is empty.
 //
@@ -456,19 +451,6 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
       totalFiber    += Number(m.fiber)    || 0;
     }
 
-    // Phase 18 — mood tally. Suppress mood_summary when fewer than 3
-    // meals carry a label; otherwise feed the counts to the model and
-    // ask for one editorial sentence.
-    let loved = 0, fine = 0, tough = 0;
-    for (const m of meals) {
-      if (!m || typeof m.mood !== 'string') continue;
-      if (m.mood === 'loved') loved++;
-      else if (m.mood === 'fine') fine++;
-      else if (m.mood === 'tough') tough++;
-    }
-    const labeledCount = loved + fine + tough;
-    const moodEligible = labeledCount >= 3;
-
     const formattedCalories = Math.round(totalCalories).toLocaleString('en-US');
     const headlineStat = `${meals.length} meals · ${formattedCalories} calories`;
 
@@ -484,10 +466,6 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
           body: {
             type: 'string',
             description: 'The composed 2-3 sentence recap paragraph itself, in the coach\'s voice. One paragraph, no line breaks, no surrounding quotation marks.'
-          },
-          mood_summary: {
-            type: 'string',
-            description: 'One short sentence summarizing the emotional shape of the week (e.g., "Three loved meals, four tough ones. A heavy week."). Empty string when no clear shape — the server will null it out.'
           },
         },
         required: ['body'],
@@ -508,9 +486,6 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
       `Do NOT call out specific calorie totals as good or bad.`,
       `Reference the dominant pattern if there is one.`,
       `Length 40-90 words. Single paragraph, no line breaks, no surrounding quotation marks.`,
-      moodEligible
-        ? `Also produce a "mood_summary": one short sentence describing the emotional shape from the per-meal mood counts (loved=${loved}, fine=${fine}, tough=${tough}). No therapy-speak, no advice — just describe the shape. Under 18 words. If the mix is genuinely flat, return an empty string.`
-        : `Do NOT include mood_summary — there is not enough signal this week.`,
       `Always reply by calling the compose_weekly_recap function with the composed paragraph as the "body" argument — never repeat these instructions back.`,
     ].join(' ');
 
@@ -534,9 +509,6 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
     const promptText = [
       `Reflect on the user's week of meals. The week ran from ${weekStart || '<start>'} to ${weekEnd || '<end>'}.`,
       `They logged ${meals.length} meals totalling ${Math.round(totalCalories)} calories.`,
-      moodEligible
-        ? `Mood labels this week: ${loved} loved, ${fine} fine, ${tough} tough (out of ${labeledCount} labeled meals).`
-        : `(${labeledCount} mood labels this week — too few to summarize.)`,
       `Recurring or notable patterns:`,
       patternList,
       ``,
@@ -548,7 +520,7 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
       `End on a thought, not a directive.`,
     ].join('\n');
 
-    console.log(`[weekly-recap] coach=${coachName} meals=${meals.length} patterns=${patterns.length} moods=${labeledCount}(L${loved}/F${fine}/T${tough})`);
+    console.log(`[weekly-recap] coach=${coachName} meals=${meals.length} patterns=${patterns.length}`);
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-lite',
@@ -576,24 +548,11 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
         return res.status(502).json({ error: 'Empty recap body from model' });
       }
 
-      // Server enforces the <3-labels rule regardless of what the model
-      // returned. Above the threshold, accept the model's sentence;
-      // otherwise null.
-      let moodSummary = null;
-      if (moodEligible) {
-        let raw = (args.mood_summary || '').toString().trim();
-        raw = stripPair(raw, '“', '”');
-        raw = stripPair(raw, '"', '"');
-        raw = raw.replace(/\s*\n\s*/g, ' ');
-        moodSummary = raw.length > 0 ? raw : null;
-      }
-
       return res.json({
         coach_name: coachName,
         body,
         headline_stat: headlineStat,
         top_pattern: topPattern,
-        mood_summary: moodSummary,
       });
     }
 
