@@ -89,11 +89,42 @@ function buildRecentMealsContext(rawJson) {
   ].join(" ");
 }
 
+// Quantity Clarification — format the optional `user_quantities` body
+// field into a single context line for the analyze prompt. Mirrors
+// `buildRecentMealsContext`: parse the JSON, defensively cap the list,
+// and return empty string on any failure so the pre-clarification
+// client keeps working.
+function buildUserQuantitiesContext(rawJson) {
+  if (!rawJson) return "";
+  let parsed;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (e) {
+    console.warn("[analyze] user_quantities not parseable JSON, ignoring");
+    return "";
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return "";
+
+  const cap = parsed.slice(0, 8);
+  const formatted = cap
+    .map(q => {
+      const name = q && q.name ? String(q.name).slice(0, 80) : null;
+      const qty  = q && q.quantity ? String(q.quantity).slice(0, 40) : null;
+      if (!name || !qty) return null;
+      return `${name}: ${qty}`;
+    })
+    .filter(Boolean);
+
+  if (formatted.length === 0) return "";
+  return `[${formatted.join(", ")}]`;
+}
+
 router.post("/analyze", upload, async (req, res) => {
   // Phase 16 — optional context inputs. Both are no-ops if absent so the
   // pre-Phase-16 client (or a curl with just `image`) keeps working.
   const recentMealsJson = req.body && req.body.recent_meals;
   const preferredJson   = req.body && req.body.preferred_coaches;
+  const userQuantitiesJson = req.body && req.body.user_quantities;
 
   let preferred = [];
   if (preferredJson) {
@@ -102,6 +133,7 @@ router.post("/analyze", upload, async (req, res) => {
   const celebName = pickCoach(preferred);
 
   const recentMealsContext = buildRecentMealsContext(recentMealsJson);
+  const userQuantitiesContext = buildUserQuantitiesContext(userQuantitiesJson);
 
   try {
     const base64Image = req.file.buffer.toString("base64");
@@ -163,8 +195,26 @@ router.post("/analyze", upload, async (req, res) => {
               items: { type: 'string' },
               description: '2-3 Key nutrients and their general benefits in one sentence and give a health score e.g., [1-100] based on nutrients'
             },
+            portionAmbiguousItems: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                    description: 'The name of the ambiguous item (e.g., "rice", "noodles", "soup")'
+                  },
+                  assumedQuantity: {
+                    type: 'string',
+                    description: 'The default quantity you assumed for this analysis, in a natural unit (e.g., "1 cup", "1 bowl", "1 scoop"). Be specific about the unit.'
+                  }
+                },
+                required: ['name', 'assumedQuantity']
+              },
+              description: 'Items in the image where the visible portion cannot determine the actual quantity. Common cases: rice, noodles, pasta, oatmeal, soup, drinks in opaque containers, loose foods served on a plate. Empty array if all items in the image have visually determinable portions. Be conservative — only flag items where your default estimate could be off by more than 50%.'
+            },
           },
-          required: ['coachAdvice', 'fallback', 'sugar', 'calories', 'carbs', 'protein', 'fat', 'fiber', 'food', 'benefits', 'drawbacks', 'nutrients']
+          required: ['coachAdvice', 'fallback', 'sugar', 'calories', 'carbs', 'protein', 'fat', 'fiber', 'food', 'benefits', 'drawbacks', 'nutrients', 'portionAmbiguousItems']
         }
       };
 
@@ -190,11 +240,24 @@ router.post("/analyze", upload, async (req, res) => {
     // and "no food detected" fallback all stay intact.
     const baseInstruction = `Analyze the image. If food is found — including fruits, vegetables, snacks, or raw ingredients — call the function "analyze_food_image".
                 Return the food name and also include health benefits, drawbacks, and nutrients and separate the calories, carbs, sugar, protein, fat, and fiber (all in grams). If no food is found, use fallback.`;
-    const promptText = recentMealsContext
-      ? `${baseInstruction}\n\nContext for the coach quote only (do not let it change the nutrition analysis): ${recentMealsContext}`
-      : baseInstruction;
+    const promptText = [
+      baseInstruction,
+      recentMealsContext
+        ? `\n\nContext for the coach quote only (do not let it change the nutrition analysis): ${recentMealsContext}`
+        : '',
+      // Quantity Clarification — when the user has resolved ambiguous
+      // portions, fold those amounts into the prompt and instruct the
+      // model to recompute totals for the whole plate accordingly.
+      // Tell it to return an empty portionAmbiguousItems on this pass
+      // since the quantities are now resolved.
+      userQuantitiesContext
+        ? `\n\nUser-specified quantities (use these exact amounts when computing calories and macros): ${userQuantitiesContext}. Recompute totals for the whole plate accordingly; items not listed keep their visually determined portions. Set portionAmbiguousItems to an empty array on this pass.`
+        : '',
+    ].filter(Boolean).join('');
 
-    if (recentMealsContext) {
+    if (userQuantitiesContext) {
+      console.log(`[analyze] coach=${celebName} with user_quantities=${userQuantitiesContext}`);
+    } else if (recentMealsContext) {
       console.log(`[analyze] coach=${celebName} with ${recentMealsContext.length} chars of recent-meals context`);
     } else {
       console.log(`[analyze] coach=${celebName} no context`);
