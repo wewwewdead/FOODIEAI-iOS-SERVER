@@ -268,7 +268,7 @@ router.post("/analyze", upload, async (req, res) => {
     // (max 2 attempts, 400ms backoff) so a real "no structured response"
     // failure still surfaces quickly to the client.
     const callGemini = () => ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-2.5-flash",
       contents: [
         {
             role: 'user',
