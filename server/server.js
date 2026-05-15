@@ -7,6 +7,12 @@ import accountRouter from './routes/account.js';
 
 dotenv.config();
 
+// Startup env audit — booleans only, never values. Lets us tell at a
+// glance from the Railway logs whether the deletion-related vars are
+// wired up after each deploy.
+console.log('[Startup] SUPABASE_URL set:', !!process.env.SUPABASE_URL);
+console.log('[Startup] SUPABASE_SERVICE_ROLE_KEY set:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
