@@ -32,21 +32,42 @@ const deadCelebs = [
   "Marie Curie",
 ];
 
-// Phase 16 — pick a coach with a soft skew toward the user's preferred
-// names. Preferred coaches get ~3x the weight of unstarred coaches; an
-// unstarred coach can still be chosen so the rotation never feels
-// hardcoded. Empty preferences => uniform random over the full pool.
+// Normalize a raw `preferred_coaches` payload into a deduped list of
+// canonical coach names. Trims whitespace, drops empties, matches
+// canonical names case-insensitively, and dedupes while preserving the
+// caller's order. Non-canonical entries are dropped (the model can only
+// voice the canonical pool).
+function sanitizePreferred(preferred) {
+  if (!Array.isArray(preferred)) return [];
+  const canonicalByLower = new Map(deadCelebs.map(c => [c.toLowerCase(), c]));
+  const seen = new Set();
+  const out = [];
+  for (const raw of preferred) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const canonical = canonicalByLower.get(trimmed.toLowerCase());
+    if (!canonical) continue;
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
+  }
+  return out;
+}
+
+// Treat `preferred` as the allowed coach pool. The starred set is the
+// user's explicit "use only these voices" choice — picking an unstarred
+// coach would feel like the app ignored them. Empty preferences =>
+// uniform random over the full canonical pool.
+//   - 0 starred: uniform random across `deadCelebs`
+//   - 1 starred: that coach, deterministically
+//   - N starred: uniform random across those N
 function pickCoach(preferred) {
-  const prefs = Array.isArray(preferred) ? preferred.filter(p => deadCelebs.includes(p)) : [];
+  const prefs = sanitizePreferred(preferred);
   if (prefs.length === 0) {
     return deadCelebs[Math.floor(Math.random() * deadCelebs.length)];
   }
-  const weighted = [];
-  for (const c of deadCelebs) {
-    const weight = prefs.includes(c) ? 3 : 1;
-    for (let i = 0; i < weight; i++) weighted.push(c);
-  }
-  return weighted[Math.floor(Math.random() * weighted.length)];
+  return prefs[Math.floor(Math.random() * prefs.length)];
 }
 
 // Phase 16 — turn a recent_meals payload into a single context paragraph
