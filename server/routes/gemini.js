@@ -559,32 +559,32 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
     const topPattern = formatTopPattern(patterns);
     const coachName = pickCoach(preferred);
 
-    const recapFunc = {
-      name: 'compose_weekly_recap',
-      description: 'Return the editorial weekly-recap paragraph composed in the chosen coach\'s voice.',
-      parameters: {
-        type: 'object',
-        properties: {
-          body: {
-            type: 'string',
-            description: 'The composed 2-3 sentence recap paragraph itself, in the coach\'s voice. One paragraph, no line breaks, no surrounding quotation marks.'
-          },
-          mood_summary: {
-            type: 'string',
-            description: 'One short sentence summarizing the emotional shape of the week (e.g., "Three loved meals, four tough ones. A heavy week."). Empty string when no clear shape — the server will null it out.'
-          },
+    // JSON-mode output schema. Switched away from function/tool calling
+    // because Gemini 2.5 Flash Lite was returning plain text instead of
+    // calling the declared function under long prompts (mood context +
+    // meal list + patterns), causing the endpoint to fail. responseMimeType
+    // + responseSchema guarantees a JSON object back.
+    const responseSchema = {
+      type: 'object',
+      properties: {
+        body: {
+          type: 'string',
+          description: 'The composed 2-3 sentence recap paragraph itself, in the coach\'s voice. One paragraph, no line breaks, no surrounding quotation marks.'
         },
-        required: ['body'],
+        mood_summary: {
+          type: 'string',
+          description: 'One short sentence summarizing the emotional shape of the week (e.g., "Three loved meals, four tough ones. A heavy week."). Empty string when no clear shape — the server will null it out.'
+        },
       },
+      required: ['body'],
     };
 
     // The voice / tone / length / no-shame rules belong in
-    // `systemInstruction`, NOT in a function-parameter `description`.
-    // Gemini's tool-use mode treats parameter descriptions as metadata
-    // about the field; when stuffed with instructions, the model
-    // occasionally echoes them back as the field's value (the
-    // "leaked-prompt body" bug). A real systemInstruction is the
-    // intended primitive for this.
+    // `systemInstruction`, NOT in a schema field `description`. Gemini
+    // treats property descriptions as metadata about the field; when
+    // stuffed with instructions, the model occasionally echoes them back
+    // as the field's value (the "leaked-prompt body" bug). A real
+    // systemInstruction is the intended primitive for this.
     const systemInstruction = [
       `You are ${coachName}, a resurrected AI nutrition coach reflecting on the user's week.`,
       `Compose 2-3 sentences in your distinctive voice. Observe; do not prescribe.`,
@@ -595,11 +595,12 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
       moodEligible
         ? `Also produce a "mood_summary": one short sentence describing the emotional shape from the per-meal mood counts (loved=${loved}, fine=${fine}, tough=${tough}). No therapy-speak, no advice — just describe the shape. Under 18 words. If the mix is genuinely flat, return an empty string.`
         : `Do NOT include mood_summary — there is not enough signal this week.`,
-      `Always reply by calling the compose_weekly_recap function with the composed paragraph as the "body" argument — never repeat these instructions back.`,
+      `Reply with a JSON object containing the composed paragraph as the "body" field — never repeat these instructions back.`,
     ].join(' ');
 
     const config = {
-      tools: [{ functionDeclarations: [recapFunc] }],
+      responseMimeType: 'application/json',
+      responseSchema,
       systemInstruction,
     };
 
@@ -634,65 +635,79 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
 
     console.log(`[weekly-recap] coach=${coachName} meals=${meals.length} patterns=${patterns.length} moods=${labeledCount}(L${loved}/F${fine}/T${tough})`);
 
-    // Cold-start / long-prompt safety: Gemini occasionally returns plain
-    // text instead of calling the tool — same flake the /analyze route
-    // mitigates with one retry. The longer prompt (mood context, pattern
-    // list) makes this more frequent here. 400ms backoff, single retry.
+    // Up to 3 attempts with exponential backoff (400ms, 1200ms).
+    // JSON mode is far more reliable than tool calling for long prompts,
+    // but transient model/network flakes still happen — give the model
+    // three chances before surfacing 502 to the client.
     const callGemini = () => ai.models.generateContent({
       model: 'gemini-2.5-flash-lite',
       contents: [{ role: 'user', parts: [{ text: promptText }] }],
       config,
     });
 
-    let response = await callGemini();
-    if (!response.functionCalls || response.functionCalls.length === 0) {
-      console.warn('[weekly-recap] no functionCalls on attempt 1, retrying once');
-      await new Promise(r => setTimeout(r, 400));
-      response = await callGemini();
-    }
-
-    if (response.functionCalls && response.functionCalls.length > 0) {
-      const args = response.functionCalls[0].args || {};
-      let body = (args.body || '').toString().trim();
-
-      // Defensive: strip a single pair of leading/trailing quotes the
-      // model occasionally wraps despite instructions.
-      const stripPair = (s, l, r) => {
-        if (s.length >= 2 && s.startsWith(l) && s.endsWith(r)) {
-          return s.slice(l.length, s.length - r.length).trim();
+    let parsed = null;
+    const maxAttempts = 3;
+    for (let attemptCount = 1; attemptCount <= maxAttempts; attemptCount++) {
+      try {
+        const response = await callGemini();
+        const candidate = JSON.parse(response.text);
+        if (candidate && candidate.body) {
+          parsed = candidate;
+          break;
         }
-        return s;
-      };
-      body = stripPair(body, '“', '”');
-      body = stripPair(body, '"', '"');
-      body = body.replace(/\s*\n\s*/g, ' ');
-
-      if (!body) {
-        return res.status(502).json({ error: 'Empty recap body from model' });
+        console.warn(`[weekly-recap] attempt ${attemptCount}: empty body in JSON response`);
+      } catch (e) {
+        console.warn(`[weekly-recap] attempt ${attemptCount}: ${e.message}`);
       }
 
-      // Server enforces the <3-labels rule regardless of what the model
-      // returned. Above the threshold, accept the model's sentence;
-      // otherwise null.
-      let moodSummary = null;
-      if (moodEligible) {
-        let raw = (args.mood_summary || '').toString().trim();
-        raw = stripPair(raw, '“', '”');
-        raw = stripPair(raw, '"', '"');
-        raw = raw.replace(/\s*\n\s*/g, ' ');
-        moodSummary = raw.length > 0 ? raw : null;
+      if (attemptCount < maxAttempts) {
+        const delay = 400 * Math.pow(3, attemptCount - 1);
+        await new Promise(r => setTimeout(r, delay));
       }
-
-      return res.json({
-        coach_name: coachName,
-        body,
-        headline_stat: headlineStat,
-        top_pattern: topPattern,
-        mood_summary: moodSummary,
-      });
     }
 
-    return res.status(502).json({ error: 'No structured response from model' });
+    if (!parsed || !parsed.body) {
+      console.error(`[weekly-recap] all ${maxAttempts} attempts failed for user ${req.body && req.body.user_id ? req.body.user_id : '<unknown>'}`);
+      return res.status(502).json({ error: 'Recap generation failed after multiple attempts' });
+    }
+
+    let body = parsed.body.toString().trim();
+
+    // Defensive: strip a single pair of leading/trailing quotes the
+    // model occasionally wraps despite instructions.
+    const stripPair = (s, l, r) => {
+      if (s.length >= 2 && s.startsWith(l) && s.endsWith(r)) {
+        return s.slice(l.length, s.length - r.length).trim();
+      }
+      return s;
+    };
+    body = stripPair(body, '“', '”');
+    body = stripPair(body, '"', '"');
+    body = body.replace(/\s*\n\s*/g, ' ');
+
+    if (!body) {
+      return res.status(502).json({ error: 'Empty recap body from model' });
+    }
+
+    // Server enforces the <3-labels rule regardless of what the model
+    // returned. Above the threshold, accept the model's sentence;
+    // otherwise null.
+    let moodSummary = null;
+    if (moodEligible) {
+      let raw = (parsed.mood_summary || '').toString().trim();
+      raw = stripPair(raw, '“', '”');
+      raw = stripPair(raw, '"', '"');
+      raw = raw.replace(/\s*\n\s*/g, ' ');
+      moodSummary = raw.length > 0 ? raw : null;
+    }
+
+    return res.json({
+      coach_name: coachName,
+      body,
+      headline_stat: headlineStat,
+      top_pattern: topPattern,
+      mood_summary: moodSummary,
+    });
   } catch (error) {
     console.error('Error generating weekly recap:', error);
     return res.status(500).json({ error: 'Failed to generate recap' });
