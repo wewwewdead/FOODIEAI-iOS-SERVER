@@ -3,6 +3,7 @@ import multer from "multer";
 import express from "express";
 import 'dotenv/config';
 import supabase from "../client/supabase.js"
+import { getAdminClient } from "../client/supabaseAdmin.js";
 
 
 // initialize google ai with api Key
@@ -519,6 +520,29 @@ router.post('/coach-observation', express.json(), async (req, res) => {
 //     models hallucinate numbers; we have the raw meals array.
 router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) => {
   try {
+    // Improvement A — JWT auth. user_id is extracted from the verified
+    // token, never trusted from the client body. Same pattern as
+    // /account DELETE.
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing or malformed authorization' });
+    }
+    const token = authHeader.slice(7);
+
+    const { client: adminClient, error: clientError } = getAdminClient();
+    if (clientError) {
+      console.error('[weekly-recap]', clientError);
+      return res.status(503).json({ error: 'Service temporarily unavailable' });
+    }
+
+    const { data: userData, error: verifyError } = await adminClient.auth.getUser(token);
+    if (verifyError || !userData || !userData.user) {
+      console.warn('[weekly-recap] token verification failed:', verifyError && verifyError.message);
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    const userId = userData.user.id;
+
     const meals = Array.isArray(req.body && req.body.meals) ? req.body.meals : [];
     if (meals.length === 0) {
       return res.status(204).end();
@@ -527,6 +551,42 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
     const weekEnd   = (req.body && req.body.week_end)   || null;
     const patterns  = Array.isArray(req.body && req.body.patterns) ? req.body.patterns : [];
     const preferred = Array.isArray(req.body && req.body.preferred_coaches) ? req.body.preferred_coaches : [];
+
+    if (!weekStart || !weekEnd) {
+      return res.status(400).json({ error: 'week_start and week_end are required' });
+    }
+
+    // Improvement A — cache check before generating. Avoids redundant
+    // Gemini calls when the same user foregrounds the app multiple
+    // times within a week. The unique (user_id, week_start) index makes
+    // this a fast point lookup.
+    const { data: existing, error: cacheError } = await adminClient
+      .from('weekly_recaps')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('week_start', weekStart)
+      .maybeSingle();
+
+    if (cacheError) {
+      console.warn('[weekly-recap] cache check failed:', cacheError.message);
+      // Don't abort — fall through to generation. Cache miss is
+      // acceptable degradation; we'll still serve the user a recap.
+    }
+
+    if (existing) {
+      console.log(`[weekly-recap] cache hit for user=${userId} week=${weekStart}`);
+      return res.json({
+        id: existing.id,
+        coach_name: existing.coach_name,
+        body: existing.body,
+        headline_stat: existing.headline_stat,
+        top_pattern: existing.top_pattern,
+        mood_summary: existing.mood_summary,
+        week_start: existing.week_start,
+        week_end: existing.week_end,
+        cached: true,
+      });
+    }
 
     // Server-computed totals. Gemini doesn't need to do arithmetic.
     let totalCalories = 0;
@@ -701,12 +761,72 @@ router.post('/weekly-recap', express.json({ limit: '512kb' }), async (req, res) 
       moodSummary = raw.length > 0 ? raw : null;
     }
 
-    return res.json({
+    // Improvement A — server-side insert. iOS used to insert under the
+    // user's JWT (RLS); now the server does it under service-role so
+    // the cache check and write live in one place. The unique
+    // (user_id, week_start) constraint is our race-condition safety
+    // net: if a concurrent request beat us to it, return that row.
+    const newRow = {
+      user_id: userId,
+      week_start: weekStart,
+      week_end: weekEnd,
       coach_name: coachName,
       body,
       headline_stat: headlineStat,
       top_pattern: topPattern,
       mood_summary: moodSummary,
+    };
+
+    const { data: inserted, error: insertError } = await adminClient
+      .from('weekly_recaps')
+      .insert(newRow)
+      .select()
+      .single();
+
+    if (insertError) {
+      // 23505 = unique_violation. Another concurrent request landed
+      // first — fetch and return the winner. The user doesn't care
+      // which generation won; they just want their recap.
+      if (insertError.code === '23505') {
+        console.log(`[weekly-recap] race condition detected for user=${userId} week=${weekStart}; returning existing row`);
+        const { data: raceWinner } = await adminClient
+          .from('weekly_recaps')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('week_start', weekStart)
+          .single();
+
+        if (raceWinner) {
+          return res.json({
+            id: raceWinner.id,
+            coach_name: raceWinner.coach_name,
+            body: raceWinner.body,
+            headline_stat: raceWinner.headline_stat,
+            top_pattern: raceWinner.top_pattern,
+            mood_summary: raceWinner.mood_summary,
+            week_start: raceWinner.week_start,
+            week_end: raceWinner.week_end,
+            cached: true,
+          });
+        }
+      }
+
+      console.error('[weekly-recap] insert failed:', insertError);
+      return res.status(500).json({ error: 'Failed to save recap' });
+    }
+
+    console.log(`[weekly-recap] generated and saved for user=${userId} week=${weekStart}`);
+
+    return res.json({
+      id: inserted.id,
+      coach_name: inserted.coach_name,
+      body: inserted.body,
+      headline_stat: inserted.headline_stat,
+      top_pattern: inserted.top_pattern,
+      mood_summary: inserted.mood_summary,
+      week_start: inserted.week_start,
+      week_end: inserted.week_end,
+      cached: false,
     });
   } catch (error) {
     console.error('Error generating weekly recap:', error);
