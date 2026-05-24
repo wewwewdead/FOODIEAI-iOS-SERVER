@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import router from './routes/gemini.js';
 import accountRouter from './routes/account.js';
+import subscriptionRouter from './routes/subscription.js';
 
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.use(express.json());
 app.use(express.urlencoded({extended: true}))
 app.use(router);
 app.use(accountRouter);
+app.use(subscriptionRouter);
 
 app.get('/', (req, res) => {
   res.send('server is working')

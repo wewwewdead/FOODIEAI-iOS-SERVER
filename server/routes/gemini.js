@@ -4,6 +4,15 @@ import express from "express";
 import 'dotenv/config';
 import supabase from "../client/supabase.js"
 import { getAdminClient } from "../client/supabaseAdmin.js";
+import {
+  authenticate,
+  parseLocalDate,
+  nextLocalMidnight,
+  computeEntitlement,
+  loadProfile,
+  readScanCount,
+  incrementScanCount,
+} from "../lib/scanLimits.js";
 
 
 // initialize google ai with api Key
@@ -142,6 +151,38 @@ function buildUserQuantitiesContext(rawJson) {
 }
 
 router.post("/analyze", upload, async (req, res) => {
+  // Phase 22 — JWT auth + scan-limit gate. The server is the source of
+  // truth for the daily scan count: an over-limit free user is
+  // rejected here with a structured 429 the iOS client routes to the
+  // limit sheet (NOT to the generic "something went wrong" path).
+  // Increment happens only on a SUCCESSFUL analysis (after we've sent
+  // the response), so a Gemini failure or decode error doesn't burn
+  // a scan.
+  const auth = await authenticate(req);
+  if (auth.errorStatus) {
+    return res.status(auth.errorStatus).json(auth.errorBody);
+  }
+  const { userId, adminClient } = auth;
+
+  const localDate = parseLocalDate(req.body && req.body.localDate);
+  const profile = await loadProfile(adminClient, userId);
+  const entitlement = computeEntitlement({
+    tier: profile?.tier,
+    signupDate: profile?.signup_date,
+    proExpiresAt: profile?.pro_expires_at,
+  });
+  const currentCount = await readScanCount(adminClient, userId, localDate);
+
+  if (currentCount >= entitlement.limit) {
+    console.log(`[analyze] limit reached user=${userId} tier=${entitlement.tier} count=${currentCount}/${entitlement.limit}`);
+    return res.status(429).json({
+      error: 'scan_limit_reached',
+      limit: entitlement.limit,
+      tier: entitlement.tier,
+      resetsAt: nextLocalMidnight(localDate),
+    });
+  }
+
   // Phase 16 — optional context inputs. Both are no-ops if absent so the
   // pre-Phase-16 client (or a curl with just `image`) keeps working.
   const recentMealsJson = req.body && req.body.recent_meals;
@@ -318,6 +359,14 @@ router.post("/analyze", upload, async (req, res) => {
     if(response.functionCalls && response.functionCalls.length > 0) {
         const functionCall = response.functionCalls[0];
         const {fallback} = functionCall.args;
+
+        // Phase 22 — increment scan count on a successful structured
+        // response from Gemini, before we send 200. Covers both the
+        // "no food detected" and the real-food branches: both consumed
+        // a Gemini call. We only skip the increment on the 400/500
+        // paths where the analysis itself failed.
+        const newCount = await incrementScanCount(adminClient, userId, localDate);
+        console.log(`[analyze] scan count user=${userId} ${newCount}/${entitlement.limit} tier=${entitlement.tier}`);
 
         if(fallback && fallback.toLowerCase().includes('no food detected')){
             return res.json({analysis:
