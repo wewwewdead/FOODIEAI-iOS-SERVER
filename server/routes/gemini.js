@@ -423,6 +423,17 @@ router.post("/analyze", upload, async (req, res) => {
             })
         }
 
+        // Diagnostic — what Gemini actually returned for the
+        // uncertainty-aware naming fields. If chips don't appear on
+        // the client, the first question is whether the model is
+        // populating these at all on the wire.
+        const _args = functionCall.args || {};
+        console.log(
+          `[analyze] naming food="${_args.food}" ` +
+          `nameConfidence=${_args.nameConfidence === undefined ? '<absent>' : JSON.stringify(_args.nameConfidence)} ` +
+          `nameAlternatives=${_args.nameAlternatives === undefined ? '<absent>' : JSON.stringify(_args.nameAlternatives)}`
+        );
+
         return res.json({
           analysis: functionCall.args,
           coach: celebName
