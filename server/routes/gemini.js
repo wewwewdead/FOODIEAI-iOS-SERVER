@@ -173,7 +173,13 @@ router.post("/analyze", upload, async (req, res) => {
   });
   const currentCount = await readScanCount(adminClient, userId, localDate);
 
-  if (currentCount >= entitlement.limit) {
+  // A quantity-clarification re-analyze (user adjusted a portion on an
+  // already-scanned meal) carries user_quantities in the body. It is a
+  // refinement of the SAME scan, not a new one — so it must neither be
+  // limit-gated nor increment the scan count.
+  const isQuantityRefinement = !!(req.body && req.body.user_quantities);
+
+  if (!isQuantityRefinement && currentCount >= entitlement.limit) {
     console.log(`[analyze] limit reached user=${userId} tier=${entitlement.tier} count=${currentCount}/${entitlement.limit}`);
     return res.status(429).json({
       error: 'scan_limit_reached',
@@ -365,8 +371,18 @@ router.post("/analyze", upload, async (req, res) => {
         // "no food detected" and the real-food branches: both consumed
         // a Gemini call. We only skip the increment on the 400/500
         // paths where the analysis itself failed.
-        const newCount = await incrementScanCount(adminClient, userId, localDate);
-        console.log(`[analyze] scan count user=${userId} ${newCount}/${entitlement.limit} tier=${entitlement.tier}`);
+        //
+        // Exception: a quantity-clarification re-analyze is a refinement
+        // of an already-counted scan, not a new one. Counting it would
+        // unfairly burn a second scan for editing a portion (e.g. a free
+        // user could exhaust their daily limit on a single meal).
+        let newCount = currentCount;
+        if (!isQuantityRefinement) {
+            newCount = await incrementScanCount(adminClient, userId, localDate);
+            console.log(`[analyze] scan count user=${userId} ${newCount}/${entitlement.limit} tier=${entitlement.tier}`);
+        } else {
+            console.log(`[analyze] quantity refinement — scan NOT counted user=${userId} (still ${currentCount}/${entitlement.limit})`);
+        }
 
         if(fallback && fallback.toLowerCase().includes('no food detected')){
             return res.json({analysis:
