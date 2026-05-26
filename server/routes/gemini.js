@@ -173,13 +173,14 @@ router.post("/analyze", upload, async (req, res) => {
   });
   const currentCount = await readScanCount(adminClient, userId, localDate);
 
-  // A quantity-clarification re-analyze (user adjusted a portion on an
-  // already-scanned meal) carries user_quantities in the body. It is a
-  // refinement of the SAME scan, not a new one — so it must neither be
-  // limit-gated nor increment the scan count.
-  const isQuantityRefinement = !!(req.body && req.body.user_quantities);
+  // A refinement re-analyze (user adjusted a portion OR corrected the
+  // food name on an already-scanned meal) carries user_quantities and/or
+  // corrected_food_name in the body. It is a refinement of the SAME scan,
+  // not a new one — so it must neither be limit-gated nor increment the
+  // scan count.
+  const isRefinement = !!(req.body && (req.body.user_quantities || req.body.corrected_food_name));
 
-  if (!isQuantityRefinement && currentCount >= entitlement.limit) {
+  if (!isRefinement && currentCount >= entitlement.limit) {
     console.log(`[analyze] limit reached user=${userId} tier=${entitlement.tier} count=${currentCount}/${entitlement.limit}`);
     return res.status(429).json({
       error: 'scan_limit_reached',
@@ -194,6 +195,9 @@ router.post("/analyze", upload, async (req, res) => {
   const recentMealsJson = req.body && req.body.recent_meals;
   const preferredJson   = req.body && req.body.preferred_coaches;
   const userQuantitiesJson = req.body && req.body.user_quantities;
+  const correctedFoodName = (req.body && typeof req.body.corrected_food_name === 'string')
+    ? req.body.corrected_food_name.trim().slice(0, 120)
+    : '';
 
   let preferred = [];
   if (preferredJson) {
@@ -224,6 +228,16 @@ router.post("/analyze", upload, async (req, res) => {
             food: {
               type: 'string',
               description: 'Name of the food in the image and if multiple foods are detected then summarize briefly'
+            },
+            nameConfidence: {
+              type: 'string',
+              enum: ['high', 'medium', 'low'],
+              description: 'How confident you are in the food name. Use "low" or "medium" when the dish visually resembles other dishes (e.g. similar-looking stews/soups/noodles) and could be confused. Use "high" only when the identification is clear and unambiguous.'
+            },
+            nameAlternatives: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'When nameConfidence is "low" or "medium", provide 2-3 plausible alternative dish names this could be, most-likely first. These are shown to the user to pick from. Empty array when confidence is "high". Example: if you guess "Kimchi stew" but it could be another Korean soup, list ["Ppyeo-haejangguk (pork bone soup)", "Sundubu-jjigae", "Yukgaejang"].'
             },
             benefits: {
               type: 'array',
@@ -283,7 +297,7 @@ router.post("/analyze", upload, async (req, res) => {
               description: 'Items in the image where the visible portion cannot determine the actual quantity. Common cases: rice, noodles, pasta, oatmeal, soup, drinks in opaque containers, loose foods served on a plate. Empty array if all items in the image have visually determinable portions. Be conservative — only flag items where your default estimate could be off by more than 50%.'
             },
           },
-          required: ['coachAdvice', 'fallback', 'sugar', 'calories', 'carbs', 'protein', 'fat', 'fiber', 'food', 'benefits', 'drawbacks', 'nutrients', 'portionAmbiguousItems']
+          required: ['coachAdvice', 'fallback', 'sugar', 'calories', 'carbs', 'protein', 'fat', 'fiber', 'food', 'nameConfidence', 'nameAlternatives', 'benefits', 'drawbacks', 'nutrients', 'portionAmbiguousItems']
         }
       };
 
@@ -309,8 +323,17 @@ router.post("/analyze", upload, async (req, res) => {
     // and "no food detected" fallback all stay intact.
     const baseInstruction = `Analyze the image. If food is found — including fruits, vegetables, snacks, or raw ingredients — call the function "analyze_food_image".
                 Return the food name and also include health benefits, drawbacks, and nutrients and separate the calories, carbs, sugar, protein, fat, and fiber (all in grams). If no food is found, use fallback.`;
+
+    // Uncertainty-aware naming guidance (cuisine-agnostic). Many dishes
+    // look alike; we'd rather express uncertainty the user can correct
+    // than confidently return a wrong name. Pair the rule with a small
+    // set of high-value confusion examples (Korean soups, Thai noodles,
+    // pho vs. ramen, curries) without ballooning the prompt.
+    const namingGuidance = `\n\nWhen identifying the dish:\n- Identify distinguishing ingredients and preparation BEFORE committing to a name. Many dishes look alike (similar broths, similar noodle bowls, similar curries).\n- Do NOT default to the most famous look-alike. A red spicy Korean soup is not automatically kimchi-jjigae — look for the specific ingredients: kimchi-jjigae has visible kimchi; ppyeo-haejangguk/gamjatang has pork bones in a cloudy spicy broth; sundubu-jjigae has soft tofu; yukgaejang has shredded beef and fern. Apply the same care across cuisines (e.g. pad thai vs pad see ew, pho vs ramen, different curries).\n- If two or more dishes are plausible, set nameConfidence to "low" or "medium" and list the alternatives in nameAlternatives (most likely first) rather than confidently guessing one.\n- It is better to express uncertainty the user can correct than to confidently return a wrong name.\n- When nameConfidence is "high", return an empty nameAlternatives array.`;
+
     const promptText = [
       baseInstruction,
+      namingGuidance,
       recentMealsContext
         ? `\n\nContext for the coach quote only (do not let it change the nutrition analysis): ${recentMealsContext}`
         : '',
@@ -322,9 +345,18 @@ router.post("/analyze", upload, async (req, res) => {
       userQuantitiesContext
         ? `\n\nUser-specified quantities (use these exact amounts when computing calories and macros): ${userQuantitiesContext}. Recompute totals for the whole plate accordingly; items not listed keep their visually determined portions. Set portionAmbiguousItems to an empty array on this pass.`
         : '',
+      // Name correction — the user told us what this dish actually is.
+      // Anchor the recompute on that name and reflect it back in `food`.
+      // Confidence is now "high" by definition and there are no
+      // alternatives to surface.
+      correctedFoodName
+        ? `\n\nThe user has identified this dish as: "${correctedFoodName}". Treat that name as authoritative. Recompute calories and macros for that specific dish. Return "${correctedFoodName}" (verbatim) as the "food" value, set nameConfidence to "high", and return an empty nameAlternatives array.`
+        : '',
     ].filter(Boolean).join('');
 
-    if (userQuantitiesContext) {
+    if (correctedFoodName) {
+      console.log(`[analyze] coach=${celebName} with corrected_food_name="${correctedFoodName}"`);
+    } else if (userQuantitiesContext) {
       console.log(`[analyze] coach=${celebName} with user_quantities=${userQuantitiesContext}`);
     } else if (recentMealsContext) {
       console.log(`[analyze] coach=${celebName} with ${recentMealsContext.length} chars of recent-meals context`);
@@ -372,16 +404,17 @@ router.post("/analyze", upload, async (req, res) => {
         // a Gemini call. We only skip the increment on the 400/500
         // paths where the analysis itself failed.
         //
-        // Exception: a quantity-clarification re-analyze is a refinement
-        // of an already-counted scan, not a new one. Counting it would
-        // unfairly burn a second scan for editing a portion (e.g. a free
-        // user could exhaust their daily limit on a single meal).
+        // Exception: a refinement re-analyze (quantity clarification OR
+        // food-name correction) is a refinement of an already-counted
+        // scan, not a new one. Counting it would unfairly burn a second
+        // scan for editing a portion or fixing a misidentified dish.
         let newCount = currentCount;
-        if (!isQuantityRefinement) {
+        if (!isRefinement) {
             newCount = await incrementScanCount(adminClient, userId, localDate);
             console.log(`[analyze] scan count user=${userId} ${newCount}/${entitlement.limit} tier=${entitlement.tier}`);
         } else {
-            console.log(`[analyze] quantity refinement — scan NOT counted user=${userId} (still ${currentCount}/${entitlement.limit})`);
+            const kind = correctedFoodName ? 'name correction' : 'quantity refinement';
+            console.log(`[analyze] ${kind} — scan NOT counted user=${userId} (still ${currentCount}/${entitlement.limit})`);
         }
 
         if(fallback && fallback.toLowerCase().includes('no food detected')){
