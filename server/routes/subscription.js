@@ -66,6 +66,7 @@ router.post('/subscription/validate', express.json({ limit: '32kb' }), async (re
   return res.json({
     tier: ent.tier,
     limit: ent.limit,
+    unlimited: ent.unlimited,
     scansUsedToday: used,
     resetsAt: nextLocalMidnight(localDate),
     proExpiresAt: ent.proExpiresAt,
@@ -87,6 +88,7 @@ router.get('/subscription/status', async (req, res) => {
     return res.json({
       tier: 'free',
       limit: 4,
+      unlimited: false,
       scansUsedToday: 0,
       resetsAt: nextLocalMidnight(localDate),
       proExpiresAt: null,
@@ -101,6 +103,7 @@ router.get('/subscription/status', async (req, res) => {
   return res.json({
     tier: ent.tier,
     limit: ent.limit,
+    unlimited: ent.unlimited,
     scansUsedToday: used,
     resetsAt: nextLocalMidnight(localDate),
     proExpiresAt: ent.proExpiresAt,

@@ -186,6 +186,11 @@ router.post("/analyze", upload, async (req, res) => {
       error: 'scan_limit_reached',
       limit: entitlement.limit,
       tier: entitlement.tier,
+      // The user is at their cap right now, so they are not "unlimited"
+      // in this moment. For Pro this only fires at the silent 100/day
+      // safety cap, which legitimate users never reach — and the client
+      // renders a cap-agnostic message rather than exposing the number.
+      unlimited: false,
       resetsAt: nextLocalMidnight(localDate),
     });
   }

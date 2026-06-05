@@ -55,16 +55,32 @@ export function nextLocalMidnight(localDate /* YYYY-MM-DD */) {
 
 const FREE_FIRST_WEEK_LIMIT = 4;
 const FREE_AFTER_LIMIT      = 2;
-const PRO_LIMIT             = 10;
+// Pro is MARKETED as "unlimited" everywhere in the UI. PRO_LIMIT is a
+// silent server-side safety cap against abuse (someone scripting the
+// endpoint to burn Gemini cost) — no legitimate user scans 100 meals a
+// day, so they never see it. The number is NEVER surfaced to clients:
+// the `unlimited: true` flag below tells the app to render "Unlimited"
+// instead of "X of 100". Do not expose this value in any response copy.
+const PRO_LIMIT             = 100;
 const FREE_BONUS_DAYS       = 7;
 
 // `signupDate` is YYYY-MM-DD (postgres date). `proExpiresAt` is a tz-aware
 // timestamp (or null/undefined). `now` is a Date — passed in so tests
 // can pin it.
+//
+// The returned `unlimited` flag is the signal the iOS client uses to
+// decide whether to show a counter at all: Pro → hide it (render
+// "Unlimited"); Free → show "X of Y". `limit` is still returned for the
+// gate math and for older app builds that don't read `unlimited` yet.
 export function computeEntitlement({ tier, signupDate, proExpiresAt, now = new Date() }) {
   const isPro = tier === 'pro' && proExpiresAt && new Date(proExpiresAt) > now;
   if (isPro) {
-    return { tier: 'pro', limit: PRO_LIMIT, proExpiresAt: new Date(proExpiresAt).toISOString() };
+    return {
+      tier: 'pro',
+      limit: PRO_LIMIT,
+      unlimited: true,
+      proExpiresAt: new Date(proExpiresAt).toISOString(),
+    };
   }
 
   // Treat missing signup_date as "today" — the new-user trigger fills
@@ -75,7 +91,7 @@ export function computeEntitlement({ tier, signupDate, proExpiresAt, now = new D
   const msSince = now.getTime() - signed.getTime();
   const daysSince = Math.floor(msSince / 86400000);
   const limit = daysSince < FREE_BONUS_DAYS ? FREE_FIRST_WEEK_LIMIT : FREE_AFTER_LIMIT;
-  return { tier: 'free', limit, proExpiresAt: null };
+  return { tier: 'free', limit, unlimited: false, proExpiresAt: null };
 }
 
 // Read tier/signup/expiry off `profiles`. Returns null if the row is
