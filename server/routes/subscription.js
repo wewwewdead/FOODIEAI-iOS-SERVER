@@ -183,15 +183,45 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
     return res.status(503).json({ error: 'unavailable' }); // transient → Apple retries
   }
 
-  // Derive the entitlement the same way computeEntitlement reads it: an
-  // active future expiry ⇒ pro; a termination or a past expiry ⇒ free.
+  // Decide the entitlement, GUARDING against Apple's out-of-order / retried
+  // delivery (order isn't guaranteed; delayed notifications retry for ~3 days).
+  // We compare this transaction's expiry against what we've already stored so a
+  // STALE notification can't regress a newer entitlement — e.g. a late
+  // SUBSCRIBED (trial expiry) arriving after DID_RENEW (paid expiry) must not
+  // shorten a paying user, and a stale EXPIRED must not free a since-renewed sub.
   const TERMINATION = new Set(['REFUND', 'REVOKE']);
   const active = !TERMINATION.has(type)
     && typeof tx.expiresDate === 'number'
     && tx.expiresDate > Date.now();
-  const update = active
-    ? { tier: 'pro', pro_expires_at: new Date(tx.expiresDate).toISOString() }
-    : { tier: 'free', pro_expires_at: null };
+  const txMs = typeof tx.expiresDate === 'number' ? tx.expiresDate : 0;
+
+  const { data: current, error: readErr } = await adminClient
+    .from('profiles')
+    .select('pro_expires_at')
+    .eq('id', appAccountToken)
+    .maybeSingle();
+  if (readErr) {
+    console.error('[subscription.notifications] read failed', readErr.message);
+    return res.status(500).json({ error: 'read_failed' }); // transient → Apple retries
+  }
+  const storedMs = current && current.pro_expires_at ? Date.parse(current.pro_expires_at) : 0;
+
+  let update = null;
+  if (active) {
+    // Renewal / (re)subscribe: only EXTEND, never shorten. Also drops
+    // duplicate/idempotent replays (txMs === storedMs) to a no-op.
+    if (txMs > storedMs) update = { tier: 'pro', pro_expires_at: new Date(txMs).toISOString() };
+  } else {
+    // Termination or past expiry: only act when this event concerns the
+    // current-or-latest period we know of. A stale downgrade for an older
+    // period (the user has since renewed) is ignored.
+    if (txMs >= storedMs) update = { tier: 'free', pro_expires_at: null };
+  }
+
+  if (!update) {
+    console.log(`[subscription.notifications] stale/no-op type=${type}/${subtype} env=${env} user=${appAccountToken} txExpiry=${txMs} stored=${storedMs}`);
+    return res.status(200).json({ ok: true, applied: false });
+  }
 
   const { error: updErr, count } = await adminClient
     .from('profiles')
