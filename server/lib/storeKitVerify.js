@@ -46,10 +46,12 @@ function base64UrlDecode(str) {
   return Buffer.from(padded, 'base64');
 }
 
-// Verify a StoreKit 2 JWS transaction. Returns the parsed payload on
-// success. Throws Error with a short reason string on any failure —
-// the route catches and returns a 400 to the client.
-export function verifyStoreKitTransaction(jws) {
+// Verify a JWS signed by Apple — a StoreKit 2 transaction OR a Server
+// Notification V2 payload (both use the same x5c chain anchored to Apple
+// Root CA G3). Returns the parsed payload; throws with a short reason on
+// any signature/chain failure. Domain checks (bundle, expiry) live in the
+// thin wrappers below.
+export function verifyAppleJWS(jws) {
   if (typeof jws !== 'string' || !jws) {
     throw new Error('JWS missing');
   }
@@ -115,6 +117,15 @@ export function verifyStoreKitTransaction(jws) {
     throw new Error('Payload parse failed');
   }
 
+  return payload;
+}
+
+// Verify a transaction JWS for GRANTING Pro from a fresh purchase (via
+// /subscription/validate): correct bundle, a present expiresDate, and not
+// already expired. Behaviour is identical to the pre-refactor function.
+export function verifyStoreKitTransaction(jws) {
+  const payload = verifyAppleJWS(jws);
+
   if (payload.bundleId !== EXPECTED_BUNDLE_ID) {
     throw new Error(`Bundle mismatch: ${payload.bundleId}`);
   }
@@ -129,5 +140,18 @@ export function verifyStoreKitTransaction(jws) {
     throw new Error('Transaction already expired');
   }
 
+  return payload;
+}
+
+// Verify a transaction JWS carried inside a Server Notification, where an
+// EXPIRED / REFUND / REVOKE event legitimately references a transaction
+// whose expiresDate is in the past. We still verify Apple's signature +
+// bundle, but leave the pro-vs-free interpretation to the caller (it
+// decides from the notification type + expiresDate).
+export function decodeVerifiedTransaction(jws) {
+  const payload = verifyAppleJWS(jws);
+  if (payload.bundleId !== EXPECTED_BUNDLE_ID) {
+    throw new Error(`Bundle mismatch: ${payload.bundleId}`);
+  }
   return payload;
 }

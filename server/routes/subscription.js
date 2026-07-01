@@ -19,7 +19,12 @@ import {
   loadProfile,
   readScanCount,
 } from '../lib/scanLimits.js';
-import { verifyStoreKitTransaction } from '../lib/storeKitVerify.js';
+import {
+  verifyStoreKitTransaction,
+  verifyAppleJWS,
+  decodeVerifiedTransaction,
+} from '../lib/storeKitVerify.js';
+import { getAdminClient } from '../client/supabaseAdmin.js';
 
 const router = express.Router();
 
@@ -108,6 +113,97 @@ router.get('/subscription/status', async (req, res) => {
     resetsAt: nextLocalMidnight(localDate),
     proExpiresAt: ent.proExpiresAt,
   });
+});
+
+// /subscription/notifications — App Store Server Notifications V2.
+//
+// Apple POSTs { signedPayload } to this URL on every subscription lifecycle
+// event (SUBSCRIBED, DID_RENEW — including a trial converting to paid —
+// EXPIRED, DID_CHANGE_RENEWAL_STATUS, REFUND, REVOKE, …). This is what
+// hardens tracking: the server learns of conversions/cancellations even when
+// the app is never opened, closing the "renewed-while-closed" gap.
+//
+// Auth is the JWS signature itself (anchored to Apple Root CA G3) — there is
+// no bearer token; a forged notification can't produce a valid Apple chain.
+// We map the event to our user via `appAccountToken`, which the iOS client
+// sets to the Supabase user id at purchase time. Purchases made before that
+// wiring carry no token and are acked-without-mapping (the client's own
+// re-validation still covers them on next launch).
+//
+// Response contract: Apple retries on any non-2xx. So we return 2xx for
+// permanent no-ops (unmappable) to stop the retry storm, and 5xx only for
+// transient failures (DB down) where a retry could succeed.
+router.post('/subscription/notifications', express.json({ limit: '256kb' }), async (req, res) => {
+  const signedPayload = req.body && req.body.signedPayload;
+  if (!signedPayload) {
+    return res.status(400).json({ error: 'missing_signedPayload' });
+  }
+
+  let notification;
+  try {
+    notification = verifyAppleJWS(signedPayload);
+  } catch (e) {
+    console.warn(`[subscription.notifications] bad signature reason=${e.message}`);
+    return res.status(400).json({ error: 'invalid_signature', detail: e.message });
+  }
+
+  const type = notification.notificationType;
+  const subtype = notification.subtype || '';
+  const env = (notification.data && notification.data.environment) || 'unknown';
+
+  // Apple's "Request a Test Notification" (and the RequestTestNotification
+  // API) send type=TEST with NO transaction — ack it so the App Store Connect
+  // dashboard confirms the endpoint is reachable and verifying signatures.
+  if (type === 'TEST') {
+    console.log(`[subscription.notifications] TEST received env=${env} — endpoint OK`);
+    return res.status(200).json({ ok: true, test: true });
+  }
+
+  let tx;
+  try {
+    const txJWS = notification.data && notification.data.signedTransactionInfo;
+    if (!txJWS) throw new Error('no signedTransactionInfo');
+    tx = decodeVerifiedTransaction(txJWS);
+  } catch (e) {
+    console.warn(`[subscription.notifications] reject type=${type} reason=${e.message}`);
+    return res.status(400).json({ error: 'invalid_notification', detail: e.message });
+  }
+
+  // Map to our user. appAccountToken == Supabase profiles.id (a UUID) set by
+  // the client at purchase. Renewals keep the same token as the original.
+  const appAccountToken = tx.appAccountToken;
+  if (!appAccountToken) {
+    console.warn(`[subscription.notifications] unmapped type=${type}/${subtype} env=${env} origTx=${tx.originalTransactionId} — no appAccountToken; acking`);
+    return res.status(200).json({ ok: true, mapped: false });
+  }
+
+  const { client: adminClient, error: clientError } = getAdminClient();
+  if (clientError) {
+    console.error('[subscription.notifications] admin client unavailable');
+    return res.status(503).json({ error: 'unavailable' }); // transient → Apple retries
+  }
+
+  // Derive the entitlement the same way computeEntitlement reads it: an
+  // active future expiry ⇒ pro; a termination or a past expiry ⇒ free.
+  const TERMINATION = new Set(['REFUND', 'REVOKE']);
+  const active = !TERMINATION.has(type)
+    && typeof tx.expiresDate === 'number'
+    && tx.expiresDate > Date.now();
+  const update = active
+    ? { tier: 'pro', pro_expires_at: new Date(tx.expiresDate).toISOString() }
+    : { tier: 'free', pro_expires_at: null };
+
+  const { error: updErr, count } = await adminClient
+    .from('profiles')
+    .update(update, { count: 'exact' })
+    .eq('id', appAccountToken);
+  if (updErr) {
+    console.error('[subscription.notifications] persist failed', updErr.message);
+    return res.status(500).json({ error: 'persist_failed' }); // transient → Apple retries
+  }
+
+  console.log(`[subscription.notifications] type=${type}/${subtype} env=${env} user=${appAccountToken} → ${update.tier} expires=${update.pro_expires_at || 'null'} product=${tx.productId} rows=${count}`);
+  return res.status(200).json({ ok: true });
 });
 
 export default router;
