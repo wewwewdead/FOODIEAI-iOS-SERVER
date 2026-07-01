@@ -232,6 +232,24 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
     return res.status(500).json({ error: 'persist_failed' }); // transient → Apple retries
   }
 
+  // Revenue-funnel analytics. The client can't see the app-closed DID_RENEW, so
+  // the true trial→paid conversion is captured HERE as `subscription_renewed`
+  // (a paid renewal, incl. the first one after a trial). Service role → we may
+  // set user_id explicitly. Best-effort; a failure here never fails the ack.
+  // The out-of-order guard above already dropped stale/duplicate events, so
+  // this fires once per real renewal/expiry.
+  const lifecycleEvent =
+    type === 'DID_RENEW' ? 'subscription_renewed'
+      : type === 'EXPIRED' ? 'subscription_expired'
+        : null;
+  if (lifecycleEvent) {
+    const { error: aErr } = await adminClient
+      .from('analytics_events')
+      .insert({ user_id: appAccountToken, name: lifecycleEvent,
+                props: { product: tx.productId, env } });
+    if (aErr) console.warn('[subscription.notifications] analytics insert failed', aErr.message);
+  }
+
   console.log(`[subscription.notifications] type=${type}/${subtype} env=${env} user=${appAccountToken} → ${update.tier} expires=${update.pro_expires_at || 'null'} product=${tx.productId} rows=${count}`);
   return res.status(200).json({ ok: true });
 });
