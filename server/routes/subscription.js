@@ -48,9 +48,17 @@ router.post('/subscription/validate', express.json({ limit: '32kb' }), async (re
   // we use; the status endpoint then computes whether pro is still
   // active by comparing against now() on every read.
   const expiresAtIso = new Date(payload.expiresDate).toISOString();
+  // Stamp originalTransactionId so the app-closed renewal webhook can map this
+  // account even for legacy purchases that carry no appAccountToken (see
+  // /subscription/notifications + migration 018). Guarded so a payload without
+  // it never nulls an existing value.
+  const patch = { tier: 'pro', pro_expires_at: expiresAtIso };
+  if (payload.originalTransactionId != null) {
+    patch.app_original_transaction_id = String(payload.originalTransactionId);
+  }
   const { error: updateErr } = await adminClient
     .from('profiles')
-    .update({ tier: 'pro', pro_expires_at: expiresAtIso })
+    .update(patch)
     .eq('id', userId);
   if (updateErr) {
     console.error('[subscription.validate] update failed', updateErr.message);
@@ -127,8 +135,10 @@ router.get('/subscription/status', async (req, res) => {
 // no bearer token; a forged notification can't produce a valid Apple chain.
 // We map the event to our user via `appAccountToken`, which the iOS client
 // sets to the Supabase user id at purchase time. Purchases made before that
-// wiring carry no token and are acked-without-mapping (the client's own
-// re-validation still covers them on next launch).
+// wiring carry no token, so we fall back to `originalTransactionId`, which
+// /subscription/validate stamps onto the profile once the user next opens the
+// app (or taps Restore). Only a legacy sub whose owner has NOT re-validated
+// since migration 018 stays unmappable, and it self-heals on their next open.
 //
 // Response contract: Apple retries on any non-2xx. So we return 2xx for
 // permanent no-ops (unmappable) to stop the retry storm, and 5xx only for
@@ -169,18 +179,33 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
     return res.status(400).json({ error: 'invalid_notification', detail: e.message });
   }
 
-  // Map to our user. appAccountToken == Supabase profiles.id (a UUID) set by
-  // the client at purchase. Renewals keep the same token as the original.
-  const appAccountToken = tx.appAccountToken;
-  if (!appAccountToken) {
-    console.warn(`[subscription.notifications] unmapped type=${type}/${subtype} env=${env} origTx=${tx.originalTransactionId} — no appAccountToken; acking`);
-    return res.status(200).json({ ok: true, mapped: false });
-  }
-
   const { client: adminClient, error: clientError } = getAdminClient();
   if (clientError) {
     console.error('[subscription.notifications] admin client unavailable');
     return res.status(503).json({ error: 'unavailable' }); // transient → Apple retries
+  }
+
+  // Map to our user. Preferred key: appAccountToken (== Supabase profiles.id, a
+  // UUID) set by the client at purchase since Phase 23. Legacy subs bought
+  // before that carry no token, and renewals INHERIT the original's (missing)
+  // token — so fall back to originalTransactionId, which /subscription/validate
+  // stamps onto the profile on the user's next app-open / Restore (migration 018).
+  let userId = tx.appAccountToken || null;
+  if (!userId && tx.originalTransactionId != null) {
+    const { data: byTx, error: lookupErr } = await adminClient
+      .from('profiles')
+      .select('id')
+      .eq('app_original_transaction_id', String(tx.originalTransactionId))
+      .maybeSingle();
+    if (lookupErr) {
+      console.error('[subscription.notifications] origTx lookup failed', lookupErr.message);
+      return res.status(500).json({ error: 'lookup_failed' }); // transient → Apple retries
+    }
+    if (byTx) userId = byTx.id;
+  }
+  if (!userId) {
+    console.warn(`[subscription.notifications] unmapped type=${type}/${subtype} env=${env} origTx=${tx.originalTransactionId} — no appAccountToken and no origTx match; acking`);
+    return res.status(200).json({ ok: true, mapped: false });
   }
 
   // Decide the entitlement, GUARDING against Apple's out-of-order / retried
@@ -198,7 +223,7 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
   const { data: current, error: readErr } = await adminClient
     .from('profiles')
     .select('pro_expires_at')
-    .eq('id', appAccountToken)
+    .eq('id', userId)
     .maybeSingle();
   if (readErr) {
     console.error('[subscription.notifications] read failed', readErr.message);
@@ -219,14 +244,14 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
   }
 
   if (!update) {
-    console.log(`[subscription.notifications] stale/no-op type=${type}/${subtype} env=${env} user=${appAccountToken} txExpiry=${txMs} stored=${storedMs}`);
+    console.log(`[subscription.notifications] stale/no-op type=${type}/${subtype} env=${env} user=${userId} txExpiry=${txMs} stored=${storedMs}`);
     return res.status(200).json({ ok: true, applied: false });
   }
 
   const { error: updErr, count } = await adminClient
     .from('profiles')
     .update(update, { count: 'exact' })
-    .eq('id', appAccountToken);
+    .eq('id', userId);
   if (updErr) {
     console.error('[subscription.notifications] persist failed', updErr.message);
     return res.status(500).json({ error: 'persist_failed' }); // transient → Apple retries
@@ -245,12 +270,12 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
   if (lifecycleEvent) {
     const { error: aErr } = await adminClient
       .from('analytics_events')
-      .insert({ user_id: appAccountToken, name: lifecycleEvent,
+      .insert({ user_id: userId, name: lifecycleEvent,
                 props: { product: tx.productId, env } });
     if (aErr) console.warn('[subscription.notifications] analytics insert failed', aErr.message);
   }
 
-  console.log(`[subscription.notifications] type=${type}/${subtype} env=${env} user=${appAccountToken} → ${update.tier} expires=${update.pro_expires_at || 'null'} product=${tx.productId} rows=${count}`);
+  console.log(`[subscription.notifications] type=${type}/${subtype} env=${env} user=${userId} → ${update.tier} expires=${update.pro_expires_at || 'null'} product=${tx.productId} rows=${count}`);
   return res.status(200).json({ ok: true });
 });
 
