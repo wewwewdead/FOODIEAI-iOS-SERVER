@@ -14,6 +14,7 @@
 // Apple Root CA - G3 PEM below is the public root distributed at
 // https://www.apple.com/certificateauthority/ — not a secret.
 
+import 'dotenv/config';
 import crypto, { X509Certificate } from 'node:crypto';
 
 const APPLE_ROOT_CA_G3_PEM = `-----BEGIN CERTIFICATE-----
@@ -34,11 +35,13 @@ at+qIxUCMG1mihDK1A3UT82NQz60imOlM27jbdoXt2QfyFMm+YhidDkLF1vLUagM
 
 const APPLE_ROOT = new X509Certificate(APPLE_ROOT_CA_G3_PEM);
 
-// Bundle ID the client transactions must claim. Pulled from env so the
-// dev build (com.thefoodieai.foodieai.debug, for example) and prod
-// build can both work without code changes. Falls back to the prod
-// bundle to fail safe.
-const EXPECTED_BUNDLE_ID = process.env.APP_BUNDLE_ID || 'com.thefoodieai.foodieai';
+// Bundle ID the client transactions must claim. Overridable via APP_BUNDLE_ID
+// so a differently-identified build can validate without code changes. The
+// default is the PRODUCTION app id (com.thefoodieai.app) so validation keeps
+// working even if the env var is ever dropped — a WRONG value here silently
+// rejects every purchase AND renewal, so the fallback must be the real id.
+export const EXPECTED_BUNDLE_ID = process.env.APP_BUNDLE_ID || 'com.thefoodieai.app';
+export const BUNDLE_ID_FROM_ENV = !!(process.env.APP_BUNDLE_ID && process.env.APP_BUNDLE_ID.trim());
 
 function base64UrlDecode(str) {
   const padded = (str + '==='.slice((str.length + 3) % 4))

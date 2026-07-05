@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import router from './routes/gemini.js';
 import accountRouter from './routes/account.js';
 import subscriptionRouter from './routes/subscription.js';
+import { EXPECTED_BUNDLE_ID, BUNDLE_ID_FROM_ENV } from './lib/storeKitVerify.js';
 
 dotenv.config();
 
@@ -13,6 +14,11 @@ dotenv.config();
 // wired up after each deploy.
 console.log('[Startup] SUPABASE_URL set:', !!process.env.SUPABASE_URL);
 console.log('[Startup] SUPABASE_SERVICE_ROLE_KEY set:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+// The effective bundle id IS printed (not just a boolean): a wrong value here
+// silently rejects every StoreKit purchase/renewal, so it must be verifiable at
+// a glance. `code default` means APP_BUNDLE_ID was not set — fine as long as the
+// printed id is the real prod app id (com.thefoodieai.app).
+console.log(`[Startup] APP_BUNDLE_ID: ${EXPECTED_BUNDLE_ID} (${BUNDLE_ID_FROM_ENV ? 'from env' : 'code default'})`);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
