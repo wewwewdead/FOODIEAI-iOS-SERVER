@@ -56,6 +56,14 @@ router.post('/subscription/validate', express.json({ limit: '32kb' }), async (re
   if (payload.originalTransactionId != null) {
     patch.app_original_transaction_id = String(payload.originalTransactionId);
   }
+  // Record the billing environment ("Sandbox" / "Production" / "Xcode") so
+  // TestFlight and sandbox test buys — whose durations Apple compresses
+  // (1yr == 1h) — can be filtered out of the real paying-customer count
+  // (migration 020). Guarded so a payload without it never nulls an existing
+  // value. Requires the profiles.subscription_env column to exist FIRST.
+  if (payload.environment != null) {
+    patch.subscription_env = String(payload.environment);
+  }
   const { error: updateErr } = await adminClient
     .from('profiles')
     .update(patch)
@@ -235,7 +243,13 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
   if (active) {
     // Renewal / (re)subscribe: only EXTEND, never shorten. Also drops
     // duplicate/idempotent replays (txMs === storedMs) to a no-op.
-    if (txMs > storedMs) update = { tier: 'pro', pro_expires_at: new Date(txMs).toISOString() };
+    if (txMs > storedMs) {
+      update = { tier: 'pro', pro_expires_at: new Date(txMs).toISOString() };
+      // Keep the billing environment fresh on every renewal (migration 020).
+      const txEnv = tx.environment != null ? String(tx.environment)
+                  : (env && env !== 'unknown' ? env : null);
+      if (txEnv) update.subscription_env = txEnv;
+    }
   } else {
     // Termination or past expiry: only act when this event concerns the
     // current-or-latest period we know of. A stale downgrade for an older
