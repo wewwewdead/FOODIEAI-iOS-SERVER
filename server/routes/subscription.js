@@ -216,6 +216,39 @@ router.post('/subscription/notifications', express.json({ limit: '256kb' }), asy
     return res.status(200).json({ ok: true, mapped: false });
   }
 
+  // Cancellation / reactivation signal (Phase 25). A user toggling auto-renew
+  // fires DID_CHANGE_RENEWAL_STATUS. AUTO_RENEW_DISABLED is the earliest churn
+  // signal we get: it lands the moment the user taps Cancel, days before the
+  // EXPIRED the funnel otherwise waits for. It is a no-op for the entitlement
+  // (access runs until the period ends, so the decision below correctly leaves
+  // pro_expires_at untouched); we only record the analytics event here.
+  // offerType === 1 means the current period is the introductory 3-day free
+  // trial, which lets us tell a trial cancel from a paid one. Best-effort: a
+  // failure never fails the ack, and this fires before the entitlement decision
+  // so it is captured even though that decision no-ops. Duplicate Apple
+  // redeliveries are rare (we ack 2xx on the happy path, so no retry storm).
+  if (type === 'DID_CHANGE_RENEWAL_STATUS') {
+    const inTrial = tx.offerType === 1 || tx.offerDiscountType === 'FREE_TRIAL';
+    let cancelEvent = null;
+    if (subtype === 'AUTO_RENEW_DISABLED') {
+      cancelEvent = inTrial ? 'trial_cancelled' : 'subscription_cancelled';
+    } else if (subtype === 'AUTO_RENEW_ENABLED') {
+      cancelEvent = inTrial ? 'trial_reactivated' : 'subscription_reactivated';
+    }
+    if (cancelEvent) {
+      const accessUntil = typeof tx.expiresDate === 'number'
+        ? new Date(tx.expiresDate).toISOString() : null;
+      const { error: cErr } = await adminClient
+        .from('analytics_events')
+        .insert({ user_id: userId, name: cancelEvent,
+                  props: { product: tx.productId, env,
+                           during_trial: String(inTrial),
+                           access_until: accessUntil } });
+      if (cErr) console.warn('[subscription.notifications] cancel analytics insert failed', cErr.message);
+      else console.log(`[subscription.notifications] ${cancelEvent} user=${userId} env=${env} product=${tx.productId} accessUntil=${accessUntil}`);
+    }
+  }
+
   // Decide the entitlement, GUARDING against Apple's out-of-order / retried
   // delivery (order isn't guaranteed; delayed notifications retry for ~3 days).
   // We compare this transaction's expiry against what we've already stored so a
